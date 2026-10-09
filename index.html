@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Route Tracker</title>
+<style>
+  :root {
+    --bg: #050505;
+    --orange: #ff7a1a;
+    --orange-soft: rgba(255, 122, 26, 0.55);
+    --text: #e8e6e3;
+    --text-dim: #8a8784;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: auto; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Helvetica Neue", Inter, -apple-system, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- Scroll stage ---------- */
+  .journey { height: 500vh; position: relative; }
+  .stage {
+    position: sticky; top: 0;
+    height: 100vh; width: 100%;
+    overflow: hidden;
+  }
+  canvas#seq {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+  }
+  /* vignette + grade overlay */
+  .stage::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%),
+      linear-gradient(to bottom, rgba(0,0,0,.35), transparent 22%);
+  }
+
+  /* ---------- Loader ---------- */
+  .loader {
+    position: absolute; inset: 0; z-index: 5;
+    display: flex; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center;
+    background: var(--bg);
+    transition: opacity .6s ease;
+  }
+  .loader.done { opacity: 0; pointer-events: none; }
+  .loader .bar {
+    width: 180px; height: 2px; background: #1c1b1a;
+    border-radius: 2px; overflow: hidden;
+  }
+  .loader .bar i {
+    display: block; height: 100%; width: 100%;
+    background: var(--orange);
+    box-shadow: 0 0 12px var(--orange-soft);
+    transform: scaleX(0); transform-origin: left;
+    transition: transform .2s ease;
+  }
+  .loader span {
+    font-size: 12px; letter-spacing: .25em; text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* ---------- Copy over the scene ---------- */
+  .hud {
+    position: absolute; z-index: 3; pointer-events: none;
+  }
+  .hud.top {
+    top: 7vh; left: 0; right: 0; text-align: center;
+  }
+  .hud.top h1 {
+    font-size: clamp(28px, 4.5vw, 56px);
+    font-weight: 600; letter-spacing: -0.01em;
+  }
+  .hud.top p {
+    margin-top: 10px; color: var(--text-dim);
+    font-size: clamp(13px, 1.3vw, 16px);
+  }
+
+  /* milestone captions, bottom-left */
+  .milestones {
+    position: absolute; z-index: 3;
+    left: 5vw; bottom: 8vh;
+    pointer-events: none;
+  }
+  .milestone {
+    position: absolute; left: 0; bottom: 0; width: 320px; max-width: 72vw;
+    opacity: 0; transform: translateY(14px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .milestone.active { opacity: 1; transform: translateY(0); }
+  .milestone .tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .25em; text-transform: uppercase;
+    color: var(--orange);
+  }
+  .milestone .tag::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--orange);
+    box-shadow: 0 0 10px var(--orange);
+  }
+  .milestone h2 { margin-top: 10px; font-size: 24px; font-weight: 600; }
+  .milestone p  { margin-top: 6px; font-size: 14px; color: var(--text-dim); line-height: 1.55; }
+
+  /* progress rail, right side */
+  .rail {
+    position: absolute; z-index: 3; right: 5vw; top: 50%;
+    transform: translateY(-50%);
+    height: 34vh; width: 2px; background: #1e1d1c;
+    border-radius: 2px;
+  }
+  .rail i {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: linear-gradient(var(--orange), #ffb347);
+    box-shadow: 0 0 10px var(--orange-soft);
+    border-radius: 2px;
+    transform: scaleY(0); transform-origin: top;
+  }
+  .rail .pct {
+    position: absolute; right: 12px; top: -6px;
+    font-size: 12px; letter-spacing: .15em; color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .scroll-hint {
+    position: absolute; z-index: 3; left: 50%; bottom: 4vh;
+    transform: translateX(-50%);
+    font-size: 12px; letter-spacing: .3em; text-transform: uppercase;
+    color: var(--text-dim);
+    animation: hint 2.2s ease-in-out infinite;
+  }
+  @keyframes hint {
+    0%, 100% { opacity: .35; transform: translate(-50%, 0); }
+    50%       { opacity: 1;  transform: translate(-50%, 6px); }
+  }
+
+  /* ---------- After section ---------- */
+  .after {
+    min-height: 60vh; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 18vh 24px;
+  }
+  .after h2 { font-size: clamp(24px, 3.4vw, 40px); font-weight: 600; }
+  .after p  { margin-top: 12px; color: var(--text-dim); max-width: 46ch; margin-inline: auto; }
+</style>
+</head>
+<body>
+
+<section class="journey" id="journey">
+  <div class="stage">
+    <canvas id="seq"></canvas>
+
+    <div class="loader" id="loader">
+      <div class="bar"><i id="loadbar"></i></div>
+      <span>Loading route</span>
+    </div>
+
+    <div class="hud top">
+      <h1>Live tracking, every mile.</h1>
+      <p>Scroll to follow the delivery from pickup to doorstep.</p>
+    </div>
+
+    <div class="milestones">
+      <div class="milestone" data-from="0"    data-to="0.18">
+        <span class="tag">Picked up</span>
+        <h2>Leaving the depot</h2>
+        <p>Your package is on board and the route is locked in.</p>
+      </div>
+      <div class="milestone" data-from="0.30" data-to="0.62">
+        <span class="tag">In transit</span>
+        <h2>Crossing the city</h2>
+        <p>Optimised routing keeps the delivery moving through live traffic.</p>
+      </div>
+      <div class="milestone" data-from="0.72" data-to="0.97">
+        <span class="tag">Arriving</span>
+        <h2>Almost there</h2>
+        <p>The driver is closing in on the drop-off point.</p>
+      </div>
+    </div>
+
+    <div class="rail"><i id="railfill"></i><span class="pct" id="railpct">0%</span></div>
+    <div class="scroll-hint" id="hint">Scroll</div>
+  </div>
+</section>
+
+<section class="after">
+  <div>
+    <h2>Delivered.</h2>
+    <p>Drop your own content here — this section scrolls in normally once the journey completes.</p>
+  </div>
+</section>
+
+<script>
+(() => {
+  const FRAME_COUNT = 150;
+  const framePath = i => `frames/frame_${String(i + 1).padStart(4, "0")}.webp`;
+
+  const canvas  = document.getElementById("seq");
+  const ctx     = canvas.getContext("2d");
+  const journey = document.getElementById("journey");
+  const loader  = document.getElementById("loader");
+  const loadbar = document.getElementById("loadbar");
+  const railfill = document.getElementById("railfill");
+  const railpct  = document.getElementById("railpct");
+  const hint     = document.getElementById("hint");
+  const milestones = [...document.querySelectorAll(".milestone")];
+
+  const frames = new Array(FRAME_COUNT);
+  let loaded = 0, ready = false;
+  let current = 0, target = 0;   // fractional frame indices
+
+  // ---- Load frames (first frame prioritised, rest in parallel batches) ----
+  function loadFrame(i) {
+    return new Promise(res => {
+      const img = new Image();
+      img.onload = () => { frames[i] = img; loaded++; loadbar.style.transform = `scaleX(${loaded / FRAME_COUNT})`; res(); };
+      img.onerror = () => { loaded++; res(); };
+      img.src = framePath(i);
+    });
+  }
+  (async () => {
+    await loadFrame(0);
+    draw(0);
+    const batch = 10;
+    for (let s = 1; s < FRAME_COUNT; s += batch) {
+      await Promise.all(
+        Array.from({ length: Math.min(batch, FRAME_COUNT - s) }, (_, k) => loadFrame(s + k))
+      );
+    }
+    ready = true;
+    loader.classList.add("done");
+  })();
+
+  // ---- Canvas sizing (cover fit, retina aware) ----
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width  = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    draw(current);
+  }
+  window.addEventListener("resize", resize);
+
+  function draw(f) {
+    const img = frames[Math.round(f)] || frames.find(Boolean);
+    if (!img) return;
+    const cw = canvas.width, ch = canvas.height;
+    const scale = Math.max(cw / img.width, ch / img.height);
+    const w = img.width * scale, h = img.height * scale;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
+  }
+
+  // ---- Scroll → progress ----
+  function progress() {
+    const rect = journey.getBoundingClientRect();
+    const total = rect.height - window.innerHeight;
+    return Math.min(1, Math.max(0, -rect.top / total));
+  }
+
+  function update() {
+    const p = progress();
+    target = p * (FRAME_COUNT - 1);
+
+    railfill.style.transform = `scaleY(${p})`;
+    railpct.textContent = Math.round(p * 100) + "%";
+    railpct.style.transform = `translateY(${p * railfill.parentElement.clientHeight}px)`;
+    hint.style.opacity = p > 0.03 ? 0 : "";
+
+    milestones.forEach(m => {
+      const from = +m.dataset.from, to = +m.dataset.to;
+      m.classList.toggle("active", p >= from && p <= to);
+    });
+  }
+  window.addEventListener("scroll", update, { passive: true });
+
+  // ---- Smooth scrub loop ----
+  function tick() {
+    if (ready) {
+      current += (target - current) * 0.16;          // easing toward scroll target
+      if (Math.abs(target - current) > 0.01) draw(current);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  resize();
+  update();
+  tick();
+})();
+</script>
+</body>
+</html>
